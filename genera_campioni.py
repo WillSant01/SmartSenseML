@@ -12,12 +12,17 @@ if __name__ == "__main__":
     gyro_y_values = []
     gyro_z_values = []
     
-    RECORDING_DURATION = 120
-    SAMPLE_INTERVAL = 0.01
+    RECORDING_DURATION = 60
+    SAMPLE_INTERVAL = 0.05
     last_sample_time = time.time()
 
-    with CustomTskin("C0:83:23:39:21:57", Hand.RIGHT) as tskin:
-        print("Starting 20-second data collection...")
+    # 2 sec execution, 3 seconds pause
+    # 40 lines for gesture, but in the autoencoder put 50 for contingecy
+    # when recording starts, stay put for 2 seconds
+    # mean of 11 gesture for csv, make 5 csv for gesture
+    # 5 gestures; up, down, left, right, ok.
+    with CustomTskin("C0:83:23:39:21:57", Hand.RIGHT) as tskin: #remember to change the 23
+        print("Starting 60-second data collection...")
         start_time = time.time()
         
         while True:
