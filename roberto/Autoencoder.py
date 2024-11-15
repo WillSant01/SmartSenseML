@@ -66,7 +66,7 @@ class GestureAutoencoderTrainer:
             sequences[key] = np.array(sequences[key])
             
         # Fit scaler on all data
-        all_data = np.vstack([seq.reshape(-1, 6) for seqs in sequences.values()])
+        all_data = np.vstack([seqs.reshape(-1, 6) for seqs in sequences.values()])
         self.scaler.fit(all_data)
         
         # Normalize all sequences
