@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # when recording starts, stay put for 2 seconds
     # mean of 11 gesture for csv, make 5 csv for gesture
     # 5 gestures; up, down, left, right, ok.
-    with CustomTskin("C0:83:23:39:21:57", Hand.RIGHT) as tskin: #remember to change the 23
+    with CustomTskin("C0:83:43:39:21:57", Hand.RIGHT) as tskin: #remember to change the 23
         print("Starting 60-second data collection...")
         start_time = time.time()
         
@@ -72,4 +72,4 @@ if __name__ == "__main__":
         pd.set_option('display.float_format', lambda x: '%.5f' % x)
         print(df.to_string(index=False))
         
-        df.to_csv(r"roberto/REST/rest1.csv")
+        #df.to_csv(r"roberto/RIGHT/right10.csv")
