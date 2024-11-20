@@ -11,6 +11,10 @@ from collections import Counter
 import os
 from pathlib import Path
 import json
+import warnings
+
+# Filter out the HDF5 warning
+warnings.filterwarnings('ignore', category=UserWarning, module='keras')
 
 class DataLoader:
     def __init__(self, base_path, use_acc=False, rest_samples=20):
@@ -18,27 +22,31 @@ class DataLoader:
         self.use_acc = use_acc
         self.rest_samples = rest_samples
         self.sampling_rate = 20     # 20 Hz
-        # Adjust for actual gesture length (50 samples max)
         self.expected_samples = 50  # Max gesture length
         self.features = ['GyroX', 'GyroY', 'GyroZ']
         if use_acc:
             self.features.extend(['AccX', 'AccY', 'AccZ'])
         
-        self.gesture_map = {
-            'UP': 1,
-            'DOWN': 2,
-            'LEFT': 3,
-            'RIGHT': 4,
-            'REST': 0
-        }
+        # Initialize empty gesture maps
+        self.gesture_map = {}
+        self.reverse_gesture_map = {}
+        
+    def create_gesture_map(self, all_labels):
+        """Create mapping between gesture names and numeric indices."""
+        unique_labels = sorted(set(all_labels))
+        # Convert index to standard Python int to avoid numpy.int64
+        self.gesture_map = {str(label): int(i) for i, label in enumerate(unique_labels)}
+        self.reverse_gesture_map = {int(idx): str(label) for label, idx in self.gesture_map.items()}
+        return self.gesture_map
 
     def load_gesture_data(self, gesture_folder):
         gesture_path = self.base_path / gesture_folder
         all_sequences = []
+        all_labels = []
         
         if not gesture_path.exists():
             print(f"Warning: Folder {gesture_path} does not exist!")
-            return all_sequences, self.gesture_map[gesture_folder]
+            return all_sequences, all_labels
 
         csv_files = list(gesture_path.glob('*.csv'))
         print(f"\nProcessing {gesture_folder} folder:")
@@ -47,6 +55,10 @@ class DataLoader:
         for csv_file in csv_files:
             try:
                 df = pd.read_csv(csv_file)
+                
+                if 'label' not in df.columns:
+                    print(f"Warning: No label column found in {csv_file}")
+                    continue
                 
                 if gesture_folder == 'REST':
                     # For REST, take segments of expected_samples length
@@ -57,11 +69,10 @@ class DataLoader:
                         chunk = df.iloc[start_idx:end_idx]
                         if len(chunk) == self.expected_samples:
                             all_sequences.append(chunk[self.features].values)
+                            all_labels.append(str(chunk['label'].iloc[0]))  # Convert to string
                 else:
                     # For gestures, find actual gesture segments
-                    # Assuming gestures are separated by non-movement periods
-                    # You might need to adjust this threshold based on your data
-                    motion_threshold = 0.1
+                    motion_threshold = 0.09
                     
                     # Calculate total motion
                     total_motion = np.sqrt(
@@ -82,45 +93,58 @@ class DataLoader:
                             # Pad if necessary
                             if len(segment) < self.expected_samples:
                                 padding_length = self.expected_samples - len(segment)
-                                padding = pd.DataFrame(0, index=range(padding_length), columns=self.features)
-                                segment = pd.concat([segment[self.features], padding])
+                                padding = pd.DataFrame(0, 
+                                                     index=range(padding_length), 
+                                                     columns=df.columns)
+                                segment = pd.concat([segment, padding])
+                            
                             all_sequences.append(segment[self.features].values)
+                            all_labels.append(str(segment['label'].iloc[0]))  # Convert to string
                 
             except Exception as e:
                 print(f"Error processing {csv_file.name}: {str(e)}")
                 continue
         
         print(f"Successfully loaded {len(all_sequences)} sequences from {gesture_folder}")
-        return all_sequences, self.gesture_map[gesture_folder]
+        return all_sequences, all_labels
+
     def load_all_data(self):
         """Load and combine all gesture data."""
         X = []
-        y = []
+        labels = []
     
         # Load gesture data
         for gesture in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
             print(f"\nLoading {gesture} data...")
-            sequences, label = self.load_gesture_data(gesture)
+            sequences, gesture_labels = self.load_gesture_data(gesture)
             X.extend(sequences)
-            y.extend([label] * len(sequences))
+            labels.extend(gesture_labels)
             print(f"Total {gesture} sequences: {len(sequences)}")
     
         # Load and sample REST data
         print("\nLoading REST data...")
-        rest_sequences, rest_label = self.load_gesture_data('REST')
+        rest_sequences, rest_labels = self.load_gesture_data('REST')
         if len(rest_sequences) > self.rest_samples:
             indices = np.random.choice(len(rest_sequences), self.rest_samples, replace=False)
             rest_sequences = [rest_sequences[i] for i in indices]
+            rest_labels = [rest_labels[i] for i in indices]
         X.extend(rest_sequences)
-        y.extend([rest_label] * len(rest_sequences))
+        labels.extend(rest_labels)
         print(f"Total REST sequences: {len(rest_sequences)}")
+        
+        # Create gesture map from all observed labels
+        self.create_gesture_map(labels)
+        
+        # Convert string labels to numeric indices
+        y = [self.gesture_map[label] for label in labels]
     
         # Convert to numpy arrays
         X = np.array(X)
         y = np.array(y)
     
         print(f"\nFinal dataset shape: X: {X.shape}, y: {y.shape}")
-        print("Class distribution:", Counter(y))
+        print("Class distribution:", Counter(labels))
+        print("Gesture mapping:", self.gesture_map)
     
         return X, y
 
@@ -146,7 +170,7 @@ class AttentionWithMasking(Layer):
     def compute_mask(self, inputs, mask=None):
         return None
 
-def create_model(input_shape, n_classes=5):
+def create_model(input_shape, n_classes):
     inputs = Input(shape=input_shape)
     masked_inputs = Masking(mask_value=0.0)(inputs)
     
@@ -185,8 +209,11 @@ def train_model(base_path, use_acc=False, rest_samples=20, epochs=50, batch_size
     # Load and preprocess data
     X, y = data_loader.load_all_data()
     
+    # Get number of classes from actual data
+    n_classes = len(data_loader.gesture_map)
+    
     # Convert labels to one-hot encoding
-    y = to_categorical(y, num_classes=5)
+    y = to_categorical(y, num_classes=n_classes)
     
     # Split data with stratification
     X_train, X_test, y_train, y_test = train_test_split(
@@ -196,7 +223,7 @@ def train_model(base_path, use_acc=False, rest_samples=20, epochs=50, batch_size
     )
     
     # Create and train model
-    model = create_model((X.shape[1], X.shape[2]))
+    model = create_model((X.shape[1], X.shape[2]), n_classes)
     
     # Add early stopping to prevent overfitting
     early_stopping = tf.keras.callbacks.EarlyStopping(
@@ -227,22 +254,27 @@ def train_model(base_path, use_acc=False, rest_samples=20, epochs=50, batch_size
     test_loss, test_accuracy = model.evaluate(X_test, y_test)
     print(f"\nTest Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}")
     
-    # Save training configuration
+    # Save training configuration with proper type conversion
     config = {
         'use_acc': use_acc,
         'features': data_loader.features,
-        'gesture_map': data_loader.gesture_map,
-        'sampling_rate': data_loader.sampling_rate,
-        'sequence_length': data_loader.expected_samples
+        'gesture_map': {str(k): int(v) for k, v in data_loader.gesture_map.items()},
+        'sampling_rate': int(data_loader.sampling_rate),
+        'sequence_length': int(data_loader.expected_samples)
     }
     
     # Save model and config
     save_path = Path(base_path) / 'trained_model'
     save_path.mkdir(exist_ok=True)
     
-    model.save(str(save_path / 'gesture_model.h5'))
-    with open(save_path / 'config.json', 'w') as f:
-        json.dump(config, f)
+    try:
+        model.save(str(save_path / 'gesture_model.h5'))
+    except Exception as e:
+        print(f"Warning during model save: {e}")
+        
+    # Save config with explicit encoding
+    with open(save_path / 'config.json', 'w', encoding='utf-8') as f:
+        json.dump(config, f, ensure_ascii=False, indent=4)
     
     print(f"\nModel and configuration saved to: {save_path}")
     
@@ -272,15 +304,15 @@ def plot_training_history(history):
 
 if __name__ == "__main__":
     # Example usage
-    base_path = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\roberto"  # Folder containing UP, DOWN, LEFT, RIGHT, REST folders
+    base_path = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\roberto"
     
     try:
         # Train model with only gyro data
         model, history, config = train_model(
             base_path,
             use_acc=False,  # Only use gyro data
-            rest_samples=100,  # Number of REST samples to use
-            epochs=25,
+            rest_samples=350,  # Number of REST samples to use
+            epochs=30,
             batch_size=64
         )
         
