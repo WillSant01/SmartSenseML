@@ -165,7 +165,7 @@ def main():
     model_path = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\roberto\trained_model"
     processor = GestureProcessor(model_path)
     
-    test_file = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\roberto\LEFT\l_left6.csv"
+    test_file = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\william\test_df_ufficiale.csv"
     results = processor.process_file(test_file)
     
     if not results.empty:

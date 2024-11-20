@@ -278,10 +278,10 @@ if __name__ == "__main__":
         # Train model with only gyro data
         model, history, config = train_model(
             base_path,
-            use_acc=True,  # Only use gyro data
-            rest_samples=10,  # Number of REST samples to use
-            epochs=35,
-            batch_size=32
+            use_acc=False,  # Only use gyro data
+            rest_samples=20,  # Number of REST samples to use
+            epochs=25,
+            batch_size=64
         )
         
         # Plot training history
