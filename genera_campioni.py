@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # when recording starts, stay put for 2 seconds
     # mean of 11 gesture for csv, make 5 csv for gesture
     # 5 gestures; up, down, left, right, ok.
-    with CustomTskin("C0:83:43:39:21:57", Hand.RIGHT) as tskin: #remember to change the 23
+    with CustomTskin("C0:83:3E:39:21:57", Hand.RIGHT) as tskin: #remember to change the 23
         print("Starting 60-second data collection...")
         start_time = time.time()
         
