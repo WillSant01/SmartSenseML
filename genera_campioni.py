@@ -12,7 +12,7 @@ if __name__ == "__main__":
     gyro_y_values = []
     gyro_z_values = []
     
-    RECORDING_DURATION = 60
+    RECORDING_DURATION = 10
     SAMPLE_INTERVAL = 0.05
     last_sample_time = time.time()
 
@@ -72,4 +72,4 @@ if __name__ == "__main__":
         pd.set_option('display.float_format', lambda x: '%.5f' % x)
         print(df.to_string(index=False))
         
-        #df.to_csv(r"roberto/RIGHT/right10.csv")
+        df.to_csv(r"william/test_schifo.csv")

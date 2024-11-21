@@ -188,7 +188,7 @@ class GestureProcessor:
 def main():
     """Main function to demonstrate usage."""
     model_path = r"C:\Users\WilliamSanteramo\OneDrive - ITS Angelo Rizzoli\Documenti\UFS\15 IoT\SmartSenseML\roberto\trained_model"  # Update with actual path
-    test_file = r"C:\Users\WilliamSanteramo\OneDrive - ITS Angelo Rizzoli\Documenti\UFS\15 IoT\SmartSenseML\william\test_df_ufficiale2.csv"   # Update with actual path
+    test_file = r"C:\Users\WilliamSanteramo\OneDrive - ITS Angelo Rizzoli\Documenti\UFS\15 IoT\SmartSenseML\william\test_schifo.csv"   # Update with actual path
 
     try:
         processor = GestureProcessor(model_path)
