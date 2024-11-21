@@ -169,7 +169,7 @@ def create_model(input_shape, n_classes):
     
     model = Model(inputs=inputs, outputs=outputs)
     
-    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005)
     model.compile(optimizer=optimizer,
                  loss='sparse_categorical_crossentropy',
                  metrics=['accuracy'])
@@ -277,7 +277,7 @@ if __name__ == "__main__":
             base_path,
             use_acc=False,         # Whether to use accelerometer data
             max_rest_samples=100,  # Limit REST samples (None for no limit)
-            epochs=20,             # Reduced from 50 to 20
+            epochs=50,             # Reduced from 50 to 20
             batch_size=64
         )
         

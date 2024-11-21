@@ -15,7 +15,7 @@ class GestureGame:
         # Window settings
         self.WINDOW_SIZE = 600
         self.CELL_SIZE = self.WINDOW_SIZE // 3
-        self.screen = pygame.display.set_mode((self.WINDOW_SIZE, self.WINDOW_SIZE + 100))  # Extra space for gesture info
+        self.screen = pygame.display.set_mode((self.WINDOW_SIZE, self.WINDOW_SIZE + 100))
         pygame.display.set_caption("Gesture Control Grid")
         
         # Colors
@@ -53,7 +53,10 @@ class GestureGame:
         self.model = load_model(os.path.join(model_dir, 'gesture_model.h5'))
         with open(os.path.join(model_dir, 'config.json'), 'r') as f:
             self.config = json.load(f)
+        self.features = self.config['features']
+        self.n_features = len(self.features)
         self.gesture_map = {int(v): k for k, v in self.config['gesture_map'].items()}
+        print(f"Loaded model with {self.n_features} features: {self.features}")
         
     def process_gesture(self, gesture, confidence):
         """Process detected gesture and update game state."""
@@ -115,7 +118,7 @@ class GestureGame:
         if len(self.sensor_buffer) == self.window_size:
             # Prepare data for model
             data = np.array(self.sensor_buffer)
-            model_input = data.reshape(1, self.window_size, 3)  # 3 features (GyroX, GyroY, GyroZ)
+            model_input = data.reshape(1, self.window_size, self.n_features)
             
             # Get prediction
             prediction = self.model.predict(model_input, verbose=0)
@@ -147,10 +150,21 @@ class GestureGame:
                     self.tskin.connect()
                     continue
                     
-                # Get gyroscope data
+                # Get gyroscope and accelerometer data
                 gyro = self.tskin.gyroscope
-                if gyro:
-                    self.sensor_buffer.append([gyro.x, gyro.y, gyro.z])
+                acc = self.tskin.accelerometer
+                
+                if gyro and acc:
+                    # Collect all required features based on model config
+                    sensor_data = []
+                    for feature in self.features:
+                        if feature.startswith('Gyro'):
+                            value = getattr(gyro, feature[-1].lower())
+                        elif feature.startswith('Acc'):
+                            value = getattr(acc, feature[-1].lower())
+                        sensor_data.append(value)
+                        
+                    self.sensor_buffer.append(sensor_data)
                     self.last_sample_time = current_time
                     
                     # Process data if we have enough samples
