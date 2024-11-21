@@ -4,232 +4,206 @@ from pathlib import Path
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 import matplotlib.pyplot as plt
-from tensorflow.keras.layers import Layer, Dense
 import json
+from typing import Dict, List, Optional, Tuple, Union
+import warnings
 
-class AttentionWithMasking(Layer):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.score_dense = Dense(1, activation='tanh')
-
-    def call(self, inputs, mask=None):
-        score = self.score_dense(inputs)
-        score = tf.squeeze(score, axis=-1)
-        
-        if mask is not None:
-            score += (1.0 - tf.cast(mask, dtype=score.dtype)) * -1e9
-            
-        attention_weights = tf.nn.softmax(score, axis=1)
-        context_vector = tf.reduce_sum(inputs * tf.expand_dims(attention_weights, -1), axis=1)
-        return context_vector, attention_weights
-
-    def compute_mask(self, inputs, mask=None):
-        return None
+warnings.filterwarnings('ignore', category=UserWarning)
 
 class GestureProcessor:
-    def __init__(self, model_path):
+    def __init__(self, model_path: str):
         self.model_path = Path(model_path)
-        self._load_model()
-        self._load_config()
-        
-    def _load_model(self):
-        try:
-            self.model = load_model(
-                str(self.model_path / 'gesture_model.h5'),
-                custom_objects={'AttentionWithMasking': AttentionWithMasking}
-            )
-        except Exception as e:
-            raise RuntimeError(f"Failed to load model: {e}")
+        self.model = None
+        self.config = None
+        self.gesture_map = None
+        self.features = None
+        self._load_model_and_config()
 
-    def _load_config(self):
+    def _load_model_and_config(self) -> None:
+        """Load the trained model and configuration."""
         try:
+            self.model = load_model(str(self.model_path / 'gesture_model.h5'))
+            
             with open(self.model_path / 'config.json', 'r') as f:
                 self.config = json.load(f)
-            # Update to handle string labels from the config
+            
             self.gesture_map = self.config['gesture_map']
-            self.labels = {v: k for k, v in self.gesture_map.items()}
             self.features = self.config['features']
-            self.sequence_length = self.config['sequence_length']
-            self.sampling_rate = self.config['sampling_rate']
+            
         except Exception as e:
-            raise RuntimeError(f"Failed to load config: {e}")
+            raise RuntimeError(f"Failed to load model or config: {e}")
 
-    def process_file(self, file_path, threshold=0.09, confidence_threshold=0.5):
-        """Process a single gesture file."""
+    def process_file(self, file_path: str, threshold: float = 0.1, 
+                    min_gesture_length: int = 35) -> pd.DataFrame:
+        """Process a single file containing gesture data."""
         try:
-            # Data loading and validation
             data = pd.read_csv(file_path)
-            missing = set(self.features) - set(data.columns)
-            if missing:
-                raise ValueError(f"Missing features: {missing}")
+            if not set(self.features).issubset(set(data.columns)):
+                raise ValueError(f"Missing required features: {set(self.features) - set(data.columns)}")
 
-            # Extract features and detect motion
             feature_data = data[self.features].values
-            motion = self._detect_motion(feature_data, threshold)
+            motion_segments = self._detect_and_segment(feature_data, threshold, min_gesture_length)
             
-            # Segment gestures
-            segments = self._segment_gestures(feature_data, motion)
-            if not segments:
+            if not motion_segments:
                 return pd.DataFrame()
-                
-            # Make predictions
-            results = self._predict_segments(segments, confidence_threshold)
+
+            predictions = self._make_predictions(motion_segments['segments'])
             
-            # Add actual labels if they exist in the test file
+            results = pd.DataFrame({
+                'timestamp': motion_segments['timestamps'],
+                'gesture': [self._idx_to_gesture(np.argmax(p)) for p in predictions],
+                'confidence': [float(np.max(p)) for p in predictions]
+            })
+
             if 'label' in data.columns:
-                results['Actual'] = self._get_actual_labels(data, segments['timestamps'])
-            
+                results['actual'] = self._get_actual_labels(data, motion_segments['timestamps'])
+
             return results
-            
+
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
             return pd.DataFrame()
 
-    def _detect_motion(self, data, threshold):
-        """Detect motion in sensor data."""
-        gyro_motion = np.sqrt(
-            data[:, self.features.index('GyroX')]**2 +
-            data[:, self.features.index('GyroY')]**2 +
-            data[:, self.features.index('GyroZ')]**2
-        )
-        return gyro_motion > threshold
+    def _detect_and_segment(self, data: np.ndarray, threshold: float, 
+                          min_length: int) -> Optional[Dict[str, np.ndarray]]:
+        """Detect motion and segment into potential gestures."""
+        # Calculate motion intensity using gyroscope data
+        gyro_indices = [i for i, f in enumerate(self.features) if f.startswith('Gyro')]
+        motion = np.sqrt(np.sum(data[:, gyro_indices] ** 2, axis=1)) > threshold
 
-    def _segment_gestures(self, data, motion, min_length=35):
-        """Segment data into gesture windows."""
-        segments = []
-        timestamps = []
-        
-        # Find motion transitions
+        # Find motion segments
         transitions = np.diff(motion.astype(int))
         starts = np.where(transitions == 1)[0]
         ends = np.where(transitions == -1)[0]
-        
-        # Handle boundary cases
+
         if len(starts) == 0 or len(ends) == 0:
             return None
-            
+
+        # Adjust boundary cases
         if starts[0] > ends[0]:
             ends = ends[1:]
         if len(starts) > len(ends):
             starts = starts[:-1]
-            
-        # Process segments
+
+        segments = []
+        timestamps = []
+
         for start, end in zip(starts, ends):
             if end - start >= min_length:
-                segment = data[start:min(end, start + self.sequence_length)]
-                if len(segment) < self.sequence_length:
-                    padding = np.zeros((self.sequence_length - len(segment), len(self.features)))
-                    segment = np.vstack([segment, padding])
-                segments.append(segment)
-                timestamps.append(start / self.sampling_rate)
-                
-        return {'segments': np.array(segments), 'timestamps': np.array(timestamps)} if segments else None
+                segment = data[start:end]
+                if len(segment) >= min_length:
+                    segments.append(segment)
+                    timestamps.append(start)
 
-    def _predict_segments(self, segment_data, confidence_threshold=0.1):
+        if not segments:
+            return None
+
+        # Pad sequences to same length
+        max_len = max(len(s) for s in segments)
+        padded_segments = np.zeros((len(segments), max_len, data.shape[1]))
+        for i, seg in enumerate(segments):
+            padded_segments[i, :len(seg)] = seg
+
+        return {
+            'segments': padded_segments,
+            'timestamps': np.array(timestamps)
+        }
+
+    def _make_predictions(self, segments: np.ndarray) -> np.ndarray:
         """Make predictions on segmented data."""
-        predictions = self.model.predict(segment_data['segments'], verbose=0)
-        
-        results = pd.DataFrame({
-            'Time': segment_data['timestamps'],
-            'Gesture': [self.labels[np.argmax(p)] for p in predictions],
-            'Confidence': [np.max(p) for p in predictions]
-        })
-        print(results)
-        return results[results['Confidence'] > confidence_threshold]
-        
+        return self.model.predict(segments, verbose=0)
 
-    def _get_actual_labels(self, data, timestamps):
-        """Get actual labels for the predicted timestamps."""
-        actual_labels = []
-        for t in timestamps:
-            idx = int(t * self.sampling_rate)
-            if idx < len(data):
-                actual_labels.append(data['label'].iloc[idx])
-            else:
-                actual_labels.append('unknown')
-        return actual_labels
+    def _idx_to_gesture(self, idx: int) -> str:
+        """Convert prediction index to gesture name."""
+        reverse_map = {int(v): k for k, v in self.gesture_map.items()}
+        return reverse_map.get(idx, 'unknown')
 
-    def visualize_results(self, results):
+    def _get_actual_labels(self, data: pd.DataFrame, timestamps: np.ndarray) -> List[str]:
+        """Get actual labels for timestamps."""
+        return [str(data['label'].iloc[t]) if t < len(data) else 'unknown' 
+                for t in timestamps]
+
+    def visualize_results(self, results: pd.DataFrame) -> None:
         """Visualize prediction results."""
         if results.empty:
             print("No predictions to visualize")
             return
-            
+
         plt.figure(figsize=(12, 8))
-        
+
         # Plot gestures
-        plt.subplot(2, 1, 1)
         unique_gestures = sorted(set(self.gesture_map.keys()))
-        gesture_nums = [unique_gestures.index(g) for g in results['Gesture']]
-        
-        scatter = plt.scatter(results['Time'], gesture_nums, c=results['Confidence'], 
-                            cmap='viridis', s=100, label='Predicted')
-        
-        # Plot actual labels if available
-        if 'Actual' in results.columns:
+        gesture_nums = [unique_gestures.index(g) for g in results['gesture']]
+
+        plt.subplot(2, 1, 1)
+        scatter = plt.scatter(results['timestamp'], gesture_nums, 
+                            c=results['confidence'], cmap='viridis', 
+                            s=100, label='Predicted')
+
+        if 'actual' in results.columns:
             actual_nums = [unique_gestures.index(g) if g in unique_gestures else -1 
-                         for g in results['Actual']]
-            plt.scatter(results['Time'], actual_nums, marker='x', color='red', 
-                       s=100, label='Actual')
+                         for g in results['actual']]
+            plt.scatter(results['timestamp'], actual_nums, marker='x', 
+                       color='red', s=100, label='Actual')
             plt.legend()
 
         plt.colorbar(scatter, label='Confidence')
         plt.yticks(range(len(unique_gestures)), unique_gestures)
-        plt.xlabel('Time (s)')
+        plt.xlabel('Time')
         plt.ylabel('Gesture')
         plt.title('Detected Gestures')
-        
+
         # Plot confidence
         plt.subplot(2, 1, 2)
-        plt.plot(results['Time'], results['Confidence'], 'b-')
+        plt.plot(results['timestamp'], results['confidence'], 'b-')
         plt.axhline(y=0.5, color='r', linestyle='--', label='Confidence Threshold')
-        plt.xlabel('Time (s)')
+        plt.xlabel('Time')
         plt.ylabel('Confidence')
         plt.title('Prediction Confidence')
         plt.legend()
-        
+
         plt.tight_layout()
         plt.show()
 
-    def print_performance_metrics(self, results):
-        """Print performance metrics if actual labels are available."""
-        if 'Actual' not in results.columns:
+    def print_metrics(self, results: pd.DataFrame) -> None:
+        """Print performance metrics."""
+        if 'actual' not in results.columns:
             return
-            
+
         print("\nPerformance Metrics:")
-        correct = (results['Actual'] == results['Gesture']).sum()
+        correct = (results['actual'] == results['gesture']).sum()
         total = len(results)
-        accuracy = correct / total if total > 0 else 0
-        print(f"Accuracy: {accuracy:.2%} ({correct}/{total})")
-        
+        print(f"Accuracy: {(correct/total)*100:.2f}% ({correct}/{total})")
+
         print("\nConfusion Matrix:")
-        # Create confusion matrix
         unique_labels = sorted(set(self.gesture_map.keys()))
-        confusion = pd.DataFrame(0, 
-                               index=unique_labels, 
-                               columns=unique_labels)
+        confusion = pd.DataFrame(0, index=unique_labels, columns=unique_labels)
         
-        for actual, pred in zip(results['Actual'], results['Gesture']):
+        for actual, pred in zip(results['actual'], results['gesture']):
             if actual in unique_labels:
                 confusion.loc[actual, pred] += 1
-                
+        
         print(confusion)
 
 def main():
-    # Update these paths to your actual paths
-    model_path = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\roberto\trained_model"
-    processor = GestureProcessor(model_path)
-    
-    test_file = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\william\test_df_ufficiale2.csv"
-    results = processor.process_file(test_file, confidence_threshold=0.1)
-    
-    if not results.empty:
-        print("\nDetected Gestures:")
-        print(results.to_string(index=False))
-        processor.print_performance_metrics(results)
-        processor.visualize_results(results)
-    else:
-        print("No gestures detected")
+    """Main function to demonstrate usage."""
+    model_path = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\roberto\trained_model"  # Update with actual path
+    test_file = r"C:\Users\Deker\Desktop\The Void\Python\SmartSenseML\william\test_df_ufficiale2.csv"   # Update with actual path
+
+    try:
+        processor = GestureProcessor(model_path)
+        results = processor.process_file(test_file, threshold=0.1)
+        
+        if not results.empty:
+            print("\nDetected Gestures:")
+            print(results)
+            processor.print_metrics(results)
+            processor.visualize_results(results)
+        else:
+            print("No gestures detected")
+            
+    except Exception as e:
+        print(f"Error in processing: {e}")
 
 if __name__ == "__main__":
     main()

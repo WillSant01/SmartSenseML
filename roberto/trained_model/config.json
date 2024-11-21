@@ -2,7 +2,10 @@
     "features": [
         "GyroX",
         "GyroY",
-        "GyroZ"
+        "GyroZ",
+        "AccX",
+        "AccY",
+        "AccZ"
     ],
     "gesture_map": {
         "0": 0,
@@ -11,6 +14,6 @@
         "3": 3,
         "4": 4
     },
-    "final_accuracy": 1.0,
-    "final_loss": 0.2651332914829254
+    "final_accuracy": 0.9811320900917053,
+    "final_loss": 0.19505728781223297
 }
