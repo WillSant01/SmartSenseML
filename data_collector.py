@@ -12,7 +12,7 @@ if __name__ == "__main__":
     gyro_y_values = []
     gyro_z_values = []
     
-    RECORDING_DURATION = 10
+    RECORDING_DURATION = 180
     SAMPLE_INTERVAL = 0.05
     last_sample_time = time.time()
 
@@ -21,7 +21,7 @@ if __name__ == "__main__":
     # when recording starts, stay put for 2 seconds
     # mean of 11 gesture for csv, make 5 csv for gesture
     # 5 gestures; up, down, left, right, ok.
-    with CustomTskin("C0:83:3E:39:21:57", Hand.RIGHT) as tskin: #remember to change the 23
+    with CustomTskin("C0:83:23:39:22:57", Hand.RIGHT) as tskin: #remember to change the 23
         print("Starting 60-second data collection...")
         start_time = time.time()
         
@@ -72,4 +72,4 @@ if __name__ == "__main__":
         pd.set_option('display.float_format', lambda x: '%.5f' % x)
         print(df.to_string(index=False))
         
-        df.to_csv(r"william/test_schifo.csv")
+        df.to_csv(r"collected_data/DATI_2/rec_8.csv")
